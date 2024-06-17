@@ -1,0 +1,89 @@
+name: continious-integration
+on:
+  pull_request:
+    branches-ignore: [ga-ignore-*]
+  push:
+    branches-ignore: [ga-ignore-*]
+
+env:
+  MIRROR_URL: git@github.com:EpitechPromo2028/B-PSU-200-BDX-2-1-minishell2-theo.leys-sion.git
+  EXECUTABLES: 'mysh'
+
+jobs:
+  check_coding_style:
+    runs-on: ubuntu-latest
+    name: coding_style
+    container:
+      image: ghcr.io/epitech/coding-style-checker:latest
+    steps:
+
+      - name: Checkout GH repository
+        uses: actions/checkout@master
+        with:
+          repository:
+      - name: Run coding-style.sh           
+        run: check.sh $(pwd) $(pwd)
+      - name: Report banana result
+        run: |
+          NB_ERROR=$(cat coding-style-reports.log | wc -l)
+          if [ $NB_ERROR -gt 0 ]; then
+            while read line; do
+              FILE=$(echo $line | cut -d: -f1)
+              LINE=$(echo $line | cut -d: -f2)
+              ERROR=$(echo $line | cut -d: -f3-)
+              echo "::error file=$FILE,line=$LINE,title=Coding Style Error::$ERROR"
+            done < coding-style-reports.log
+            exit 1
+          fi
+          exit 0
+
+  check_program_compilation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    needs: check_coding_style
+    steps:
+      - name: Checkout GH repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compile repository
+        run: make
+      - name: Check binary presence
+        run: |
+                IFS=',' read -ra EXECS <<< ${{ env.EXECUTABLES }}
+                for exec in "${EXECS[@]}"; do
+                  if [ ! -x "$exec" ]; then
+                    echo "executable $exec not found"
+                    exit 1
+                  fi
+                done
+  run-tests:
+    container: epitechcontent/epitest-docker:latest
+    timeout-minutes: 2
+    name: Run Unit & Integration Tests
+    needs: [check_program_compilation]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout GH repo
+        uses: actions/checkout@master
+        with:
+          fetch-depth: 0
+      - name: Compile tests binaries
+        run: make unit_tests
+      - name: Check integration test
+        run: ./unit_tests/unit_tests
+  push_to_mirror:
+    name: repository mirror
+    needs: [run-tests]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check
+        uses: actions/checkout@master
+        with:
+            fetch-depth: 0
+      - name: push to repository
+        uses: pixta-dev/repository-mirroring-action@v1
+        with:
+          target_repo_url: ${{ env.MIRROR_URL }}
+          ssh_private_key: ${{ secrets.GIT_SSH_PRIVATE_KEY }}
